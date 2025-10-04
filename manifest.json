@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Cached Article Highlighter",
+  "version": "0.2.0",
+  "description": "Highlights cached links and lets you save the current page to the backend.",
+  "permissions": ["storage", "activeTab", "contextMenus"],
+  "host_permissions": ["http://bevo.ly:8002/*"],
+  "background": { "service_worker": "sw.js" },
+  "action": {
+    "default_title": "Save current page to cache"
+  },
+  "content_scripts": [
+    {
+        "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
