@@ -45,14 +45,14 @@ function getOriginKey(pageUrl) {
 }
 
 // ======== BACKEND CALLS ========
-async function checkCached(pageUrl, urls) {
+async function checkCached(pageUrl, urls, { force = false } = {}) {
   const originKey = getOriginKey(pageUrl);
   const now = Date.now();
   const entry = mem.get(originKey);
   const payload = [...new Set(urls.map(normalizeUrl))];
 
   // use cache if fresh
-  if (entry && now - entry.at < TTL_MS) {
+  if (!force && entry && now - entry.at < TTL_MS) {
     const result = payload.filter(u => entry.cachedSet.has(u));
     return { ok: true, cached: result };
   }
@@ -88,35 +88,58 @@ async function saveToBackend(url) {
 // ======== MESSAGE HANDLERS ========
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "CHECK_CACHED") {
-    checkCached(msg.pageUrl, msg.urls)
+    checkCached(msg.pageUrl, msg.urls, { force: Boolean(msg.force) })
       .then(resp => sendResponse(resp))
       .catch(err => sendResponse({ ok: false, error: String(err) }));
     return true; // async
   }
-});
 
-// ======== ACTION BUTTON: SAVE CURRENT TAB ========
-chrome.action.onClicked.addListener(async (tab) => {
-  try {
-    const url = tab?.url || "";
-    if (!/^https?:\/\//i.test(url)) {
-      await setBadge({ text: "×", tooltip: "Unsupported URL" });
-      if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Unsupported URL" });
-      return;
-    }
-    await saveToBackend(url);
-    await setBadge({ text: "✓", tooltip: "Saved" });
-    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Saved to cache" });
-    // warm the cache for this origin
-    const originKey = getOriginKey(url);
-    const entry = mem.get(originKey) || { at: 0, cachedSet: new Set() };
-    entry.cachedSet.add(normalizeUrl(url));
-    entry.at = Date.now();
-    mem.set(originKey, entry);
-  } catch (e) {
-    console.error(e);
-    await setBadge({ text: "×", tooltip: "Save failed" });
-    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Save failed" });
+  if (msg?.type === "SAVE_URL") {
+    (async () => {
+      try {
+        const url = msg.url || "";
+        const tabId = msg.tabId;
+        if (!/^https?:\/\//i.test(url)) {
+          await setBadge({ text: "×", tooltip: "Unsupported URL" });
+          if (tabId) {
+            try {
+              await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Unsupported URL" });
+            } catch (err) {
+              console.warn("Failed to send toast to tab", err);
+            }
+          }
+          sendResponse({ ok: false, error: "Unsupported URL" });
+          return;
+        }
+        await saveToBackend(url);
+        await setBadge({ text: "✓", tooltip: "Saved" });
+        if (tabId) {
+          try {
+            await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Saved to cache" });
+          } catch (e) {
+            console.warn("Failed to send toast to tab", e);
+          }
+        }
+        const originKey = getOriginKey(url);
+        const entry = mem.get(originKey) || { at: 0, cachedSet: new Set() };
+        entry.cachedSet.add(normalizeUrl(url));
+        entry.at = Date.now();
+        mem.set(originKey, entry);
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.error(e);
+        await setBadge({ text: "×", tooltip: "Save failed" });
+        if (msg.tabId) {
+          try {
+            await chrome.tabs.sendMessage(msg.tabId, { type: "TOAST", text: "Save failed" });
+          } catch (err) {
+            console.warn("Failed to send toast to tab", err);
+          }
+        }
+        sendResponse({ ok: false, error: String(e) });
+      }
+    })();
+    return true;
   }
 });
 

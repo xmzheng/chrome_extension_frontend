@@ -96,7 +96,7 @@
   }
 
   // ======== SCAN & QUERY BACKGROUND ========
-  function scanAndMark() {
+  function scanAndMark({ force = false } = {}) {
     const anchors = getArticleAnchors();
     if (!anchors.length) return;
 
@@ -115,6 +115,7 @@
         type: "CHECK_CACHED",
         pageUrl: location.href,
         urls: [...map.keys()],
+        force,
       },
       (resp) => {
         if (!resp || !resp.ok) return;
@@ -192,6 +193,8 @@
   const messageListener = (msg) => {
     if (msg?.type === "TOAST" && msg.text) {
       showToast(msg.text);
+    } else if (msg?.type === "FORCE_RESCAN") {
+      scanAndMark({ force: true });
     }
   };
   chrome.runtime.onMessage.addListener(messageListener);

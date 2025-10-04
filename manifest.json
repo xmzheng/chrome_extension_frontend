@@ -7,7 +7,8 @@
   "host_permissions": ["http://bevo.ly:8002/*"],
   "background": { "service_worker": "sw.js" },
   "action": {
-    "default_title": "Save current page to cache"
+    "default_title": "Cached Article Highlighter",
+    "default_popup": "popup.html"
   },
   "content_scripts": [
     {
