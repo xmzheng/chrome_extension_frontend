@@ -36,6 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (error) {
       console.error("Save failed", error);
       showTemporaryStatus(saveBtn, originalText, "Save failed");
+      alert(error?.message || "Failed to save page as PDF");
     }
   });
 

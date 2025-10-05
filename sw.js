@@ -25,6 +25,64 @@ function normalizeUrl(u) {
   }
 }
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function sanitizeFilenamePart(part) {
+  return part
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+function buildFilename(url, ext = "pdf") {
+  try {
+    const parsed = new URL(url);
+    const host = sanitizeFilenamePart(parsed.hostname);
+    let path = sanitizeFilenamePart(parsed.pathname.replace(/\/+$/g, "").replace(/^\//, "").replace(/\//g, "-"));
+    if (!path) path = "index";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return [host, path, timestamp].filter(Boolean).join("_") + `.${ext}`;
+  } catch {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `page_${timestamp}.${ext}`;
+  }
+}
+
+async function capturePdf(tabId, url) {
+  if (!tabId) {
+    throw new Error("Missing tab id for PDF capture");
+  }
+  if (!chrome.tabs?.saveAsPDF) {
+    throw new Error("PDF capture is not supported in this browser");
+  }
+
+  try {
+    const pdfBuffer = await chrome.tabs.saveAsPDF({ tabId });
+    return {
+      content: {
+        type: "application/pdf",
+        encoding: "base64",
+        data: arrayBufferToBase64(pdfBuffer),
+        filename: buildFilename(url, "pdf"),
+      },
+      buffer: pdfBuffer,
+    };
+  } catch (err) {
+    throw new Error(`Failed to capture PDF: ${err?.message || err}`);
+  }
+}
+
 async function setBadge({ text = "", tooltip }) {
   await chrome.action.setBadgeText({ text });
   if (text) await chrome.action.setBadgeBackgroundColor({ color: "#2ecc71" });
@@ -85,6 +143,36 @@ async function saveToBackend(url) {
   return res.json();
 }
 
+async function savePdfToBackend(url, content) {
+  const body = JSON.stringify({
+    items: [
+      {
+        url: normalizeUrl(url),
+        contents: [content],
+      },
+    ],
+  });
+  const res = await fetch(SAVE_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    throw new Error(`SAVE failed (${res.status}): ${msg || "Unknown error"}`);
+  }
+  return res.json();
+}
+
+async function showErrorDialog(tabId, message) {
+  if (!tabId) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "ERROR_DIALOG", text: message });
+  } catch (err) {
+    console.warn("Failed to send error dialog to tab", err);
+  }
+}
+
 // ======== MESSAGE HANDLERS ========
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === "CHECK_CACHED") {
@@ -111,11 +199,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: "Unsupported URL" });
           return;
         }
-        await saveToBackend(url);
-        await setBadge({ text: "✓", tooltip: "Saved" });
+        const pdf = await capturePdf(tabId, url);
+        await savePdfToBackend(url, pdf.content);
+        await setBadge({ text: "✓", tooltip: "PDF saved" });
         if (tabId) {
           try {
-            await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Saved to cache" });
+            await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Saved PDF to cache" });
           } catch (e) {
             console.warn("Failed to send toast to tab", e);
           }
@@ -135,6 +224,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           } catch (err) {
             console.warn("Failed to send toast to tab", err);
           }
+          await showErrorDialog(msg.tabId, e?.message || "Failed to save page as PDF");
         }
         sendResponse({ ok: false, error: String(e) });
       }
@@ -161,7 +251,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   } catch (e) {
     console.error(e);
     await setBadge({ text: "×", tooltip: "Save failed" });
-    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Save failed" });
+    if (tab?.id) {
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Save failed" });
+      } catch (err) {
+        console.warn("Failed to send toast to tab", err);
+      }
+      await showErrorDialog(tab.id, e?.message || "Failed to save page");
+    }
   }
 });
 

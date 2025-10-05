@@ -193,6 +193,8 @@
   const messageListener = (msg) => {
     if (msg?.type === "TOAST" && msg.text) {
       showToast(msg.text);
+    } else if (msg?.type === "ERROR_DIALOG" && msg.text) {
+      window.alert(msg.text);
     } else if (msg?.type === "FORCE_RESCAN") {
       scanAndMark({ force: true });
     }
