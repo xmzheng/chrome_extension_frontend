@@ -30,18 +30,34 @@ function serializeDocument() {
 
 
 // ======== URL NORMALIZATION (match backend logic) ========
-function normalizeUrl(u) {
+function normalizeUrl(raw) {
   try {
-    const abs = new URL(u, location.href);
-    ["utm_source","utm_medium","utm_campaign","utm_term","utm_content",
-     "gclid","fbclid","ref","refsrc","spm","mkt_tok","cid","cmpid"]
-      .forEach(p => abs.searchParams.delete(p));
-    abs.hash = "";
-    if (abs.pathname.length > 1 && abs.pathname.endsWith("/")) {
-      abs.pathname = abs.pathname.slice(0, -1);
+    const abs = new URL(raw, location.href);
+    const scheme = abs.protocol.replace(/:$/, "").toLowerCase();
+    const hostname = (abs.hostname || "").toLowerCase();
+    const port = abs.port;
+    const isDefaultPort = !port || (scheme === "https" && port === "443") || (scheme === "http" && port === "80");
+    const netloc = isDefaultPort ? hostname : `${hostname}:${port}`;
+
+    let path = abs.pathname || "/";
+    try {
+      path = decodeURIComponent(path);
+    } catch {
+      // ignore decode errors and keep the original path
     }
-    return abs.toString();
-  } catch { return u; }
+    path = path.replace(/\/{2,}/g, "/");
+    if (path !== "/" && path.endsWith("/")) {
+      path = path.slice(0, -1);
+    }
+
+    if (netloc && !path.startsWith("/")) {
+      path = `/${path}`;
+    }
+
+    return netloc ? `${scheme}://${netloc}${path}` : `${scheme}:${path}`;
+  } catch {
+    return raw;
+  }
 }
 
 // ======== FIND ARTICLE ANCHORS ========
