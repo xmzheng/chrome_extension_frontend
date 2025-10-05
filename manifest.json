@@ -3,7 +3,7 @@
   "name": "Cached Article Highlighter",
   "version": "0.2.0",
   "description": "Highlights cached links and lets you save the current page to the backend.",
-  "permissions": ["storage", "activeTab", "contextMenus"],
+  "permissions": ["storage", "activeTab", "contextMenus", "downloads"],
   "host_permissions": ["http://bevo.ly:8002/*"],
   "background": { "service_worker": "sw.js" },
   "action": {
