@@ -38,76 +38,6 @@ function normalizeUrl(raw) {
   }
 }
 
-function bytesToBase64(bytes) {
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, chunk);
-  }
-  return btoa(binary);
-}
-
-function arrayBufferToBase64(buffer) {
-  return bytesToBase64(new Uint8Array(buffer));
-}
-
-function buildFilename(url, ext) {
-  try {
-    const { hostname, pathname } = new URL(url);
-    const raw = `${hostname}${pathname}`.replace(/\?.*$/, "");
-    const parts = raw.split(/[\/\s]+/).filter(Boolean).slice(-3);
-    const slug = parts.join("-") || hostname || "page";
-    const safeSlug = slug
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
-    return `${safeSlug || "page"}.${ext}`;
-  } catch {
-    return `page.${ext}`;
-  }
-}
-
-async function capturePdf(tabId, url) {
-  if (!tabId) {
-    throw new Error("Missing tab id for PDF capture");
-  }
-  if (!chrome.tabs?.saveAsPDF) {
-    throw new Error("PDF capture is not supported in this browser");
-  }
-
-  try {
-    const pdfBuffer = await chrome.tabs.saveAsPDF({ tabId });
-    return {
-      content: {
-        type: "application/pdf",
-        encoding: "base64",
-        data: arrayBufferToBase64(pdfBuffer),
-        filename: buildFilename(url, "pdf"),
-      },
-      buffer: pdfBuffer,
-    };
-  } catch (err) {
-    throw new Error(`Failed to capture PDF: ${err?.message || err}`);
-  }
-}
-
-async function downloadPdf(content, buffer) {
-  if (!chrome.downloads?.download || !content) return;
-
-  try {
-    const filename = content.filename || "page.pdf";
-    const blob = buffer ? new Blob([buffer], { type: content.type || "application/pdf" })
-                        : new Blob([Uint8Array.from(atob(content.data || ""), c => c.charCodeAt(0))], { type: content.type || "application/pdf" });
-    const blobUrl = URL.createObjectURL(blob);
-    await chrome.downloads.download({ url: blobUrl, filename, saveAs: false });
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
-  } catch (err) {
-    console.warn("[SW] Failed to download PDF", err);
-  }
-}
-
 async function setBadge({ text = "", tooltip }) {
   await chrome.action.setBadgeText({ text });
   if (text) await chrome.action.setBadgeBackgroundColor({ color: "#2ecc71" });
@@ -154,12 +84,8 @@ async function checkCached(pageUrl, urls) {
   return { ok: true, cached: result };
 }
 
-async function saveToBackend(url, content) {
-  const payload = { urls: [normalizeUrl(url)] };
-  if (content) {
-    payload.content = content;
-  }
-  const body = JSON.stringify(payload);
+async function saveToBackend(url) {
+  const body = JSON.stringify({ urls: [normalizeUrl(url)] });
   const res = await fetch(SAVE_API, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -191,9 +117,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Unsupported URL" });
       return;
     }
-    const { content, buffer } = await capturePdf(tab.id, url);
-    await saveToBackend(url, content);
-    await downloadPdf(content, buffer);
+    await saveToBackend(url);
     await setBadge({ text: "✓", tooltip: "Saved" });
     if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Saved to cache" });
     // warm the cache for this origin
@@ -205,15 +129,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   } catch (e) {
     console.error(e);
     await setBadge({ text: "×", tooltip: "Save failed" });
-    if (tab?.id) {
-      const message = e?.message || "Failed to save page as PDF.";
-      chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Save failed" });
-      chrome.tabs.sendMessage(tab.id, {
-        type: "ERROR_DIALOG",
-        title: "Save failed",
-        text: message,
-      });
-    }
+    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: "Save failed" });
   }
 });
 
