@@ -1,6 +1,34 @@
 console.log("[CS] loaded on", location.href);
 
 
+function serializeDocument() {
+  const clone = document.documentElement.cloneNode(true);
+  const head = clone.querySelector("head");
+  if (head && !head.querySelector("base")) {
+    const base = document.createElement("base");
+    base.href = document.baseURI;
+    head.insertBefore(base, head.firstChild);
+  }
+
+  const { doctype } = document;
+  let doctypeString = "<!DOCTYPE html>";
+  if (doctype) {
+    doctypeString = `<!DOCTYPE ${doctype.name}`;
+    if (doctype.publicId) {
+      doctypeString += ` PUBLIC "${doctype.publicId}"`;
+    } else if (doctype.systemId) {
+      doctypeString += " SYSTEM";
+    }
+    if (doctype.systemId) {
+      doctypeString += ` "${doctype.systemId}"`;
+    }
+    doctypeString += ">";
+  }
+
+  return `${doctypeString}\n${clone.outerHTML}`;
+}
+
+
 // ======== URL NORMALIZATION (match backend logic) ========
 function normalizeUrl(u) {
   try {
@@ -114,7 +142,109 @@ function showToast(text) {
   toastTimer = setTimeout(() => { el.style.opacity = "0"; }, 1600);
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === "TOAST" && msg.text) showToast(msg.text);
+function showErrorDialog(text, title = "Error") {
+  const existing = document.getElementById("__cached_error_dialog");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "__cached_error_dialog";
+  overlay.style.cssText = `
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  `;
+
+  const dialog = document.createElement("div");
+  dialog.style.cssText = `
+    background: #ffffff;
+    color: #1f2933;
+    border-radius: 12px;
+    width: min(360px, 90vw);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  `;
+
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  heading.style.cssText = `
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  `;
+
+  const message = document.createElement("p");
+  message.textContent = text || "An unexpected error occurred.";
+  message.style.cssText = `
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+  `;
+
+  const buttonRow = document.createElement("div");
+  buttonRow.style.cssText = `
+    display: flex;
+    justify-content: flex-end;
+  `;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "OK";
+  button.style.cssText = `
+    border: none;
+    border-radius: 999px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: rgb(220, 38, 38);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
+  `;
+  button.addEventListener("click", () => overlay.remove());
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      overlay.remove();
+    }
+  });
+
+  buttonRow.appendChild(button);
+  dialog.appendChild(heading);
+  dialog.appendChild(message);
+  dialog.appendChild(buttonRow);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  button.focus();
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === "TOAST" && msg.text) {
+    showToast(msg.text);
+    return;
+  }
+
+  if (msg?.type === "ERROR_DIALOG") {
+    showErrorDialog(msg.text, msg.title);
+    return;
+  }
+
+  if (msg?.type === "CAPTURE_PAGE_SNAPSHOT") {
+    try {
+      const html = serializeDocument();
+      sendResponse({ ok: true, snapshot: { html, title: document.title } });
+    } catch (err) {
+      console.error("[CS] Failed to serialize document", err);
+      sendResponse({ ok: false, error: String(err) });
+    }
+  }
 });
 
