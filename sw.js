@@ -4,7 +4,7 @@ console.log("[SW] loaded", new Date().toISOString());
 // ======== CONFIG ========
 const API_BASE = "http://bevo.ly:8002";
 const CHECK_API = `${API_BASE}/cached-links`;
-const SAVE_API  = `${API_BASE}/admin/cache`;
+const SAVE_API = `${API_BASE}/admin/cache`;
 const TTL_MS = 60_000; // cache freshness for per-origin checks
 
 // ======== UTIL ========
@@ -95,6 +95,46 @@ async function capturePdf(tabId, url) {
     };
   } catch (err) {
     throw new Error(`Failed to capture PDF: ${err?.message || err}`);
+  }
+}
+
+async function savePdfLocally({ buffer, content }) {
+  if (!buffer || !content?.filename) {
+    throw new Error("Missing PDF data for local save");
+  }
+
+  if (!chrome.downloads?.download) {
+    throw new Error("Downloads API is not available");
+  }
+
+  const blob = new Blob([buffer], { type: "application/pdf" });
+  const blobUrl = URL.createObjectURL(blob);
+
+  try {
+    await new Promise((resolve, reject) => {
+      chrome.downloads.download(
+        {
+          url: blobUrl,
+          filename: content.filename,
+          saveAs: false,
+        },
+        (downloadId) => {
+          const err = chrome.runtime?.lastError;
+          if (err) {
+            reject(new Error(err.message || "Failed to start download"));
+            return;
+          }
+          if (!downloadId) {
+            reject(new Error("Failed to start download"));
+            return;
+          }
+          resolve(downloadId);
+        }
+      );
+    });
+  } finally {
+    // Give Chrome a moment to consume the blob URL before revoking it.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1_000);
   }
 }
 
@@ -216,10 +256,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         const pdf = await capturePdf(tabId, url);
         await savePdfToBackend(url, pdf.content);
+        await savePdfLocally(pdf);
         await setBadge({ text: "✓", tooltip: "PDF saved" });
         if (tabId) {
           try {
-            await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Saved PDF to cache" });
+            await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Saved PDF to cache & downloads" });
           } catch (e) {
             console.warn("Failed to send toast to tab", e);
           }
