@@ -11,15 +11,30 @@ const TTL_MS = 60_000; // cache freshness for per-origin checks
 function normalizeUrl(u) {
   try {
     const url = new URL(u);
-    ["utm_source","utm_medium","utm_campaign","utm_term","utm_content",
-     "gclid","fbclid","ref","refsrc","spm","mkt_tok","cid","cmpid"]
-      .forEach(p => url.searchParams.delete(p));
-    url.hash = "";
-    // remove trailing slash unless root
-    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
-      url.pathname = url.pathname.slice(0, -1);
+    const scheme = url.protocol.replace(/:$/, "").toLowerCase();
+    const hostname = (url.hostname || "").toLowerCase();
+    let port = url.port;
+    if ((scheme === "https" && port === "443") || (scheme === "http" && port === "80")) {
+      port = "";
     }
-    return url.toString();
+
+    let path = url.pathname || "/";
+    try {
+      path = decodeURIComponent(path || "/");
+    } catch (err) {
+      console.warn("[SW] failed to decode pathname", path, err);
+    }
+    path = path || "/";
+    path = path.replace(/\/{2,}/g, "/");
+    if (path !== "/" && path.endsWith("/")) {
+      path = path.slice(0, -1);
+    }
+    if (!path.startsWith("/")) {
+      path = `/${path}`;
+    }
+
+    const authority = port ? `${hostname}:${port}` : hostname;
+    return `${scheme}://${authority}${path}`;
   } catch {
     return u;
   }

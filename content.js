@@ -23,26 +23,30 @@
   function normalizeUrl(u) {
     try {
       const abs = new URL(u, location.href);
-      [
-        "utm_source",
-        "utm_medium",
-        "utm_campaign",
-        "utm_term",
-        "utm_content",
-        "gclid",
-        "fbclid",
-        "ref",
-        "refsrc",
-        "spm",
-        "mkt_tok",
-        "cid",
-        "cmpid",
-      ].forEach((p) => abs.searchParams.delete(p));
-      abs.hash = "";
-      if (abs.pathname.length > 1 && abs.pathname.endsWith("/")) {
-        abs.pathname = abs.pathname.slice(0, -1);
+      const scheme = abs.protocol.replace(/:$/, "").toLowerCase();
+      const hostname = (abs.hostname || "").toLowerCase();
+      let port = abs.port;
+      if ((scheme === "https" && port === "443") || (scheme === "http" && port === "80")) {
+        port = "";
       }
-      return abs.toString();
+
+      let path = abs.pathname || "/";
+      try {
+        path = decodeURIComponent(path || "/");
+      } catch (err) {
+        console.warn(`${LOG_PREFIX} failed to decode pathname`, path, err);
+      }
+      path = path || "/";
+      path = path.replace(/\/{2,}/g, "/");
+      if (path !== "/" && path.endsWith("/")) {
+        path = path.slice(0, -1);
+      }
+      if (!path.startsWith("/")) {
+        path = `/${path}`;
+      }
+
+      const authority = port ? `${hostname}:${port}` : hostname;
+      return `${scheme}://${authority}${path}`;
     } catch (error) {
       console.warn(`${LOG_PREFIX} failed to normalize url`, u, error);
       return u;
