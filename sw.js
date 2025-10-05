@@ -8,33 +8,20 @@ const SAVE_API  = `${API_BASE}/admin/cache`;
 const TTL_MS = 60_000; // cache freshness for per-origin checks
 
 // ======== UTIL ========
-function normalizeUrl(raw) {
+function normalizeUrl(u) {
   try {
-    const abs = new URL(raw);
-    const scheme = abs.protocol.replace(/:$/, "").toLowerCase();
-    const hostname = (abs.hostname || "").toLowerCase();
-    const port = abs.port;
-    const isDefaultPort = !port || (scheme === "https" && port === "443") || (scheme === "http" && port === "80");
-    const netloc = isDefaultPort ? hostname : `${hostname}:${port}`;
-
-    let path = abs.pathname || "/";
-    try {
-      path = decodeURIComponent(path);
-    } catch {
-      // ignore decode errors and keep the original path
+    const url = new URL(u);
+    ["utm_source","utm_medium","utm_campaign","utm_term","utm_content",
+     "gclid","fbclid","ref","refsrc","spm","mkt_tok","cid","cmpid"]
+      .forEach(p => url.searchParams.delete(p));
+    url.hash = "";
+    // remove trailing slash unless root
+    if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
+      url.pathname = url.pathname.slice(0, -1);
     }
-    path = path.replace(/\/{2,}/g, "/");
-    if (path !== "/" && path.endsWith("/")) {
-      path = path.slice(0, -1);
-    }
-
-    if (netloc && !path.startsWith("/")) {
-      path = `/${path}`;
-    }
-
-    return netloc ? `${scheme}://${netloc}${path}` : `${scheme}:${path}`;
+    return url.toString();
   } catch {
-    return raw;
+    return u;
   }
 }
 
