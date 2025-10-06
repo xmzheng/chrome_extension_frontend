@@ -60,7 +60,7 @@ function sanitizeFilenamePart(part) {
     .slice(0, 80);
 }
 
-function buildFilename(url, ext = "pdf") {
+function buildFilename(url, ext = "mhtml") {
   try {
     const parsed = new URL(url);
     const host = sanitizeFilenamePart(parsed.hostname);
@@ -74,40 +74,53 @@ function buildFilename(url, ext = "pdf") {
   }
 }
 
-async function capturePdf(tabId, url) {
+async function captureMhtml(tabId, url) {
   if (!tabId) {
-    throw new Error("Missing tab id for PDF capture");
+    throw new Error("Missing tab id for MHTML capture");
   }
-  if (!chrome.tabs?.saveAsPDF) {
-    throw new Error("PDF capture is not supported in this browser");
+  if (!chrome.pageCapture?.saveAsMHTML) {
+    throw new Error("MHTML capture is not supported in this browser");
   }
 
   try {
-    const pdfBuffer = await chrome.tabs.saveAsPDF({ tabId });
+    const blob = await new Promise((resolve, reject) => {
+      chrome.pageCapture.saveAsMHTML({ tabId }, (result) => {
+        const err = chrome.runtime?.lastError;
+        if (err) {
+          reject(new Error(err.message || "Failed to capture MHTML"));
+          return;
+        }
+        if (!result) {
+          reject(new Error("Failed to capture MHTML"));
+          return;
+        }
+        resolve(result);
+      });
+    });
+    const buffer = await blob.arrayBuffer();
     return {
       content: {
-        type: "application/pdf",
+        type: "multipart/related",
         encoding: "base64",
-        data: arrayBufferToBase64(pdfBuffer),
-        filename: buildFilename(url, "pdf"),
+        data: arrayBufferToBase64(buffer),
+        filename: buildFilename(url, "mhtml"),
       },
-      buffer: pdfBuffer,
+      blob,
     };
   } catch (err) {
-    throw new Error(`Failed to capture PDF: ${err?.message || err}`);
+    throw new Error(`Failed to capture MHTML: ${err?.message || err}`);
   }
 }
 
-async function savePdfLocally({ buffer, content }) {
-  if (!buffer || !content?.filename) {
-    throw new Error("Missing PDF data for local save");
+async function saveMhtmlLocally({ blob, content }) {
+  if (!blob || !content?.filename) {
+    throw new Error("Missing MHTML data for local save");
   }
 
   if (!chrome.downloads?.download) {
     throw new Error("Downloads API is not available");
   }
 
-  const blob = new Blob([buffer], { type: "application/pdf" });
   const blobUrl = URL.createObjectURL(blob);
 
   try {
@@ -198,7 +211,7 @@ async function saveToBackend(url) {
   return res.json();
 }
 
-async function savePdfToBackend(url, content) {
+async function saveMhtmlToBackend(url, content) {
   const body = JSON.stringify({
     items: [
       {
@@ -254,13 +267,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: "Unsupported URL" });
           return;
         }
-        const pdf = await capturePdf(tabId, url);
-        await savePdfToBackend(url, pdf.content);
-        await savePdfLocally(pdf);
-        await setBadge({ text: "✓", tooltip: "PDF saved" });
+        const mhtml = await captureMhtml(tabId, url);
+        await saveMhtmlToBackend(url, mhtml.content);
+        await saveMhtmlLocally(mhtml);
+        await setBadge({ text: "✓", tooltip: "MHTML saved" });
         if (tabId) {
           try {
-            await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Saved PDF to cache & downloads" });
+            await chrome.tabs.sendMessage(tabId, { type: "TOAST", text: "Saved page to cache & downloads" });
           } catch (e) {
             console.warn("Failed to send toast to tab", e);
           }
@@ -280,7 +293,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           } catch (err) {
             console.warn("Failed to send toast to tab", err);
           }
-          await showErrorDialog(msg.tabId, e?.message || "Failed to save page as PDF");
+          await showErrorDialog(msg.tabId, e?.message || "Failed to save page as MHTML");
         }
         sendResponse({ ok: false, error: String(e) });
       }
