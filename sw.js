@@ -121,7 +121,9 @@ async function saveMhtmlLocally({ blob, content }) {
     throw new Error("Downloads API is not available");
   }
 
-  const blobUrl = URL.createObjectURL(blob);
+  const mimeType = blob.type || content?.type || "application/octet-stream";
+  // URL.createObjectURL is unavailable in extension service workers, so build a data URL.
+  const blobUrl = `data:${mimeType};base64,${content.data}`;
 
   try {
     await new Promise((resolve, reject) => {
@@ -145,9 +147,6 @@ async function saveMhtmlLocally({ blob, content }) {
         }
       );
     });
-  } finally {
-    // Give Chrome a moment to consume the blob URL before revoking it.
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1_000);
   }
 }
 
